@@ -128,6 +128,14 @@ namespace fc {
           proms[1] = fc::static_pointer_cast<fc::promise_base>(f2.m_prom);
           return wait_any_until(fc::move(proms), fc::time_point::now()+timeout_us );
        }
+      
+  public:
+        #define TLS_SIZE 8
+      static int32_t tlsAlloc();
+      static void *tlsGet(int32_t idx);
+      static void tlsPut(int32_t idx, void *v);
+      static void tlsFree(int32_t idx);
+      
     private:
       thread( class thread_d* );
       friend class promise_base;

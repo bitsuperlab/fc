@@ -102,7 +102,9 @@ namespace fc {
      complete(false),
      cur_task(0),
      context_posted_num(0)
-    {}
+    {
+        memset(&m_tls, 0, sizeof(m_tls));
+    }
 
     ~context() {
 #if BOOST_VERSION >= 105600
@@ -137,6 +139,8 @@ namespace fc {
       next_blocked_mutex = nullptr;
       next = nullptr;
       complete = false;
+        
+        memset(&m_tls, 0, sizeof(m_tls));
     }
 
     struct blocked_promise {
@@ -232,6 +236,8 @@ namespace fc {
     bool                         complete;
     task_base*                   cur_task;
     uint64_t                     context_posted_num; // serial number set each tiem the context is added to the ready list
+      
+    void *m_tls[TLS_SIZE];
   };
 
 } // naemspace fc 

@@ -34,6 +34,8 @@ namespace fc {
               static boost::atomic<int> cnt(0);
               name = fc::string("th_") + char('a'+cnt++); 
 //              printf("thread=%p\n",this);
+                
+                memset(&m_tls, 0, sizeof(m_tls));
             }
 
             ~thread_d()
@@ -95,6 +97,9 @@ namespace fc {
            // thread in a process)
            std::vector<detail::specific_data_info> non_task_specific_data;
            unsigned next_unused_task_storage_slot;
+        
+        
+            void *m_tls[TLS_SIZE];
 
 #ifndef NDEBUG
            unsigned                 non_preemptable_scope_count;
