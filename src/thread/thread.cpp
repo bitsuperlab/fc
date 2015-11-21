@@ -484,6 +484,57 @@ namespace fc {
     {
       my->unblock(c);
     }
+    
+    
+    // thread local storage for fc::thread
+    static char s_tls[TLS_SIZE];
+    
+    int32_t thread::tlsAlloc()
+    {
+        int32_t i;
+        
+        for (i = 0; i < TLS_SIZE; i++)
+            if (s_tls[i] == 0)
+            {
+                s_tls[i] = 1;
+                return i;
+            }
+        
+        return -1;
+    }
+    
+    void* thread::tlsGet(int32_t idx)
+    {
+        auto cur_context = current().my->current;
+        if(cur_context)
+        {
+            return cur_context->m_tls[idx];
+        }
+        else
+        {
+            return current().my->m_tls[idx];
+        }
+        
+        return 0;
+    }
+    
+    void thread::tlsPut(int32_t idx, void* v)
+    {
+        auto cur_context = current().my->current;
+        if(cur_context)
+        {
+            cur_context->m_tls[idx] = v;
+        }
+        else
+        {
+            current().my->m_tls[idx] = v;
+        }
+    }
+    
+    void thread::tlsFree(int32_t idx)
+    {
+        s_tls[idx] = 0;
+    }
 
 
 #ifdef _MSC_VER
