@@ -81,6 +81,8 @@ namespace fc {
      my_context.fc_stack.limit = static_cast<char*>( my_context.fc_stack.base) - stack_size;
      make_fcontext( &my_context, sf );
 #endif
+        
+      memset(&m_tls, 0, sizeof(m_tls));
     }
 
     context( fc::thread* t) :
@@ -140,7 +142,6 @@ namespace fc {
       next = nullptr;
       complete = false;
         
-        memset(&m_tls, 0, sizeof(m_tls));
     }
 
     struct blocked_promise {
