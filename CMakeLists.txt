@@ -24,7 +24,7 @@ SET( DEFAULT_LIBRARY_INSTALL_DIR lib/ )
 SET( DEFAULT_EXECUTABLE_INSTALL_DIR bin/ )
 SET( CMAKE_DEBUG_POSTFIX _debug )
 SET( BUILD_SHARED_LIBS NO )
-SET( ECC_IMPL openssl CACHE STRING "openssl or secp256k1 or mixed" )
+SET( ECC_IMPL secp256k1 CACHE STRING "secp256k1 or openssl or mixed" )
 
 set(platformBitness 32)
 if(CMAKE_SIZEOF_VOID_P EQUAL 8)
@@ -37,17 +37,58 @@ SET(BOOST_COMPONENTS)
 LIST(APPEND BOOST_COMPONENTS thread date_time system filesystem program_options signals serialization chrono unit_test_framework context locale iostreams)
 SET( Boost_USE_STATIC_LIBS ON CACHE STRING "ON or OFF" )
 
-
 IF( ECC_IMPL STREQUAL openssl )
-SET( ECC_REST src/crypto/elliptic_impl_pub.cpp )
+  SET( ECC_REST src/crypto/elliptic_impl_pub.cpp )
 ELSE( ECC_IMPL STREQUAL openssl )
-SET( ECC_LIB secp256k1 )
-IF( ECC_IMPL STREQUAL mixed )
-SET( ECC_REST src/crypto/elliptic_impl_priv.cpp src/crypto/elliptic_impl_pub.cpp )
-ELSE( ECC_IMPL STREQUAL mixed )
-SET( ECC_REST src/crypto/elliptic_impl_priv.cpp )
-ENDIF( ECC_IMPL STREQUAL mixed )
+  SET( ECC_LIB secp256k1 )
+  IF( ECC_IMPL STREQUAL mixed )
+    SET( ECC_REST src/crypto/elliptic_impl_priv.cpp src/crypto/elliptic_impl_pub.cpp )
+  ELSE( ECC_IMPL STREQUAL mixed )
+    SET( ECC_REST src/crypto/elliptic_impl_priv.cpp )
+  ENDIF( ECC_IMPL STREQUAL mixed )
 ENDIF( ECC_IMPL STREQUAL openssl )
+
+# Configure secp256k1-zkp
+if ( WIN32 )
+    # autoconf won't work here, hard code the defines
+    set( SECP256K1_DIR "${CMAKE_CURRENT_SOURCE_DIR}/vendor/secp256k1-zkp" )
+
+    file( GLOB SECP256K1_SOURCES "${SECP256K1_DIR}/src/secp256k1.c" )
+    add_library( secp256k1 ${SECP256K1_SOURCES} )
+
+    target_include_directories( secp256k1 PRIVATE "${SECP256K1_DIR}" PUBLIC "${SECP256K1_DIR}/include" )
+
+    set( SECP256K1_BUILD_DEFINES
+        USE_FIELD_10X26
+        USE_FIELD_INV_BUILTIN
+        USE_NUM_NONE
+        USE_SCALAR_8X32
+        USE_SCALAR_INV_BUILTIN )
+    set_target_properties( secp256k1 PROPERTIES COMPILE_DEFINITIONS "${SECP256K1_BUILD_DEFINES}" LINKER_LANGUAGE C )
+else ( WIN32 )
+    include(ExternalProject)
+    ExternalProject_Add( project_secp256k1
+     PREFIX ${CMAKE_CURRENT_BINARY_DIR}/vendor/secp256k1-zkp
+     SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/secp256k1-zkp
+     CONFIGURE_COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/vendor/secp256k1-zkp/configure --prefix=${CMAKE_CURRENT_BINARY_DIR}/vendor/secp256k1-zkp --with-bignum=no
+     BUILD_COMMAND make
+     INSTALL_COMMAND true
+     BUILD_BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/vendor/secp256k1-zkp/src/project_secp256k1-build/.libs/libsecp256k1.a
+    )
+    ExternalProject_Add_Step(project_secp256k1 autogen
+     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/vendor/secp256k1-zkp
+     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/vendor/secp256k1-zkp/autogen.sh
+     DEPENDERS configure
+    )
+
+    ExternalProject_Get_Property(project_secp256k1 binary_dir)
+
+    add_library(secp256k1 STATIC IMPORTED)
+    set_property(TARGET secp256k1 PROPERTY IMPORTED_LOCATION ${binary_dir}/.libs/libsecp256k1${CMAKE_STATIC_LIBRARY_SUFFIX})
+    set_property(TARGET secp256k1 PROPERTY INTERFACE_INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR}/vendor/secp256k1-zkp/include)
+    add_dependencies(secp256k1 project_secp256k1)
+endif ( WIN32 )
+# End configure secp256k1-zkp
 
 IF( WIN32 )
   MESSAGE(STATUS "Configuring fc to build on Win32")
@@ -77,13 +118,12 @@ ELSE(WIN32)
 
   LIST(APPEND BOOST_COMPONENTS coroutine)
 
-  FIND_PACKAGE(Boost 1.53 REQUIRED COMPONENTS ${BOOST_COMPONENTS}) 
+  FIND_PACKAGE(Boost 1.53 REQUIRED COMPONENTS ${BOOST_COMPONENTS})
 
   SET(CMAKE_FIND_LIBRARY_SUFFIXES ".a;.so")
 
   IF(NOT APPLE)
     # Linux or other unix
-    SET(SALSA_SRC vendor/salsa20/salsa20.s)
     SET(rt_library rt )
     SET(pthread_library pthread)
   ENDIF(NOT APPLE)
@@ -102,10 +142,20 @@ find_package(OpenSSL REQUIRED)
 
 set( CMAKE_FIND_LIBRARY_SUFFIXES ${ORIGINAL_LIB_SUFFIXES} )
 
+# We are now building in support for deflate compression into our websockets layer by default,
+# which requires zlib.  Aside from that, all of fc compiles without zlib, so this could be
+# made optional without much effort
+# (important exception, apple: as of 10.10 yosemite, the OpenSSL static libraries shipped with 
+# os x have a dependency on zlib)
+# On a side note, fc's fc::zlib_compress() function uses a separate implementation of zlib
+# from the miniz library.  If we're comfortable requiring an external zlib, we can 
+# reimplement fc::zlib_compress() to call the real zlib, and remove miniz.c from our
+# repository.
+find_package( ZLIB REQUIRED )
+
 option( UNITY_BUILD OFF )
 
 set( fc_sources
-     src/rpc/state.cpp
      src/uint128.cpp
      src/real128.cpp
      src/variant.cpp
@@ -115,8 +165,8 @@ set( fc_sources
      src/thread/thread_specific.cpp
      src/thread/future.cpp
      src/thread/task.cpp
-     src/thread/spin_lock.cpp 
-     src/thread/spin_yield_lock.cpp 
+     src/thread/spin_lock.cpp
+     src/thread/spin_yield_lock.cpp
      src/thread/mutex.cpp
      src/thread/non_preemptable_scope_check.cpp
      src/asio.cpp
@@ -137,15 +187,19 @@ set( fc_sources
      src/interprocess/signals.cpp
      src/interprocess/file_mapping.cpp
      src/interprocess/mmap_struct.cpp
-     src/rpc/json_connection.cpp
      src/rpc/cli.cpp
-     src/log/log_message.cpp 
+     src/rpc/http_api.cpp
+     src/rpc/json_connection.cpp
+     src/rpc/state.cpp
+     src/rpc/websocket_api.cpp
+     src/log/log_message.cpp
      src/log/logger.cpp
      src/log/appender.cpp
      src/log/console_appender.cpp
      src/log/file_appender.cpp
      src/log/gelf_appender.cpp
      src/log/logger_config.cpp
+     src/crypto/_digest_common.cpp
      src/crypto/openssl.cpp
      src/crypto/aes.cpp
      src/crypto/crc.cpp
@@ -167,9 +221,6 @@ set( fc_sources
      ${ECC_REST}
      src/crypto/elliptic_${ECC_IMPL}.cpp
      src/crypto/rand.cpp
-     src/crypto/salsa20.cpp
-     #src/crypto/scrypt.cpp
-     src/crypto/romix.cpp
      src/network/tcp_socket.cpp
      src/network/udp_socket.cpp
      src/network/udt_socket.cpp
@@ -184,19 +235,11 @@ set( fc_sources
      src/network/gntp.cpp
      src/compress/smaz.cpp
      src/compress/zlib.cpp
-     src/compress/lzma.cpp
      vendor/cyoencode-1.0.2/src/CyoDecode.c
      vendor/cyoencode-1.0.2/src/CyoEncode.c
-     #vendor/salsa20/ecrypt.c
-     ${SALSA_SRC}
      )
 
-     SET_PROPERTY( SOURCE 
-                   vendor/salsa20/salsa20.s
-                   PROPERTY LANGUAGE C)
-
-file(GLOB_RECURSE fc_headers ${CMAKE_CURRENT_SOURCE_DIR} 
-  *.hpp *.h)
+file( GLOB_RECURSE fc_headers ${CMAKE_CURRENT_SOURCE_DIR} *.hpp *.h )
 
 set( sources
   ${fc_sources}
@@ -206,12 +249,11 @@ configure_file("${CMAKE_CURRENT_SOURCE_DIR}/src/git_revision.cpp.in" "${CMAKE_CU
 list(APPEND sources "${CMAKE_CURRENT_BINARY_DIR}/git_revision.cpp")
 list(APPEND sources ${fc_headers})
 
-add_subdirectory( vendor/easylzma )
-add_subdirectory( vendor/websocketpp )
-#add_subdirectory( vendor/scrypt-jane )
+add_subdirectory( vendor/websocketpp EXCLUDE_FROM_ALL )
 add_subdirectory( vendor/udt4 )
 
-setup_library( fc SOURCES ${sources} LIBRARY_TYPE STATIC DONT_INSTALL_LIBRARY )
+setup_library( fc SOURCES ${sources} LIBRARY_TYPE STATIC )
+install( DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/include/" DESTINATION include )
 
 # begin readline stuff
 find_package(Curses)
@@ -234,12 +276,16 @@ endif(WIN32)
 
 IF(WIN32)
   target_compile_definitions(fc PUBLIC WIN32 NOMINMAX _WIN32_WINNT=0x0501 _CRT_SECURE_NO_WARNINGS
-    _SCL_SERCURE_NO_WARNINGS 
+    _SCL_SERCURE_NO_WARNINGS
     # Needed to disable MSVC autolinking feature (#pragma comment)
     BOOST_ALL_NO_LIB
+    # The current version of websockets doesn't correctly guess what 'chrono' implementation boost::asio uses
+    # on the recommended build platform of VC++12/boost_1.58.  Force it here until websocket gets their
+    # autodetecting code to do the right thing.
+    _WEBSOCKETPP_CPP11_CHRONO_
   )
   # Activate C++ exception handling, assume extern C calls don't throw
-  # Add /U options to be sure settings specific to dynamic boost link are ineffective 
+  # Add /U options to be sure settings specific to dynamic boost link are ineffective
   target_compile_options(fc PUBLIC /EHsc /UBOOST_ALL_DYN_LINK /UBOOST_LINKING_PYTHON /UBOOST_DEBUG_PYTHON)
 ELSE()
   SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=c99 -Wall")
@@ -253,7 +299,12 @@ ELSE()
     SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -Wall -fnon-call-exceptions")
   ENDIF()
 ENDIF()
- 
+
+# This will become unnecessary once we update to websocketpp which fixes upstream issue #395
+SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DWEBSOCKETPP_STRICT_MASKING")
+
+SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DBOOST_ASIO_HAS_STD_CHRONO")
+
 target_include_directories(fc
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${Boost_INCLUDE_DIR}
@@ -261,17 +312,19 @@ target_include_directories(fc
     "${readline_includes}"
 
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
-  #${CMAKE_CURRENT_SOURCE_DIR}/vendor/scrypt-jane
-    ${CMAKE_CURRENT_SOURCE_DIR}/vendor/cyoencode-1.0.2/src
     ${CMAKE_CURRENT_SOURCE_DIR}/vendor/boost_1.51/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/vendor/salsa20
-    ${CMAKE_CURRENT_SOURCE_DIR}/vendor/easylzma/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/vendor/cyoencode-1.0.2/src
     ${CMAKE_CURRENT_SOURCE_DIR}/vendor/udt4/src
     ${CMAKE_CURRENT_SOURCE_DIR}/vendor/websocketpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/vendor/secp256k1-zkp
+    ${ZLIB_INCLUDE_DIR}
   )
 
-#target_link_libraries( fc PUBLIC easylzma_static scrypt udt ${Boost_LIBRARIES} ${OPENSSL_LIBRARIES} ${ZLIB_LIBRARIES} ${PLATFORM_SPECIFIC_LIBS} ${RPCRT4} ${CMAKE_DL_LIBS} ${rt_library} ${ECC_LIB} )
-target_link_libraries( fc PUBLIC -L/usr/local/lib easylzma_static udt ${Boost_LIBRARIES} ${OPENSSL_LIBRARIES} ${ZLIB_LIBRARIES} ${PLATFORM_SPECIFIC_LIBS} ${RPCRT4} ${CMAKE_DL_LIBS} ${rt_library} ${readline_libraries} ${ECC_LIB} )
+#target_link_libraries( fc PUBLIC udt ${Boost_LIBRARIES} ${OPENSSL_LIBRARIES} ${ZLIB_LIBRARIES} ${PLATFORM_SPECIFIC_LIBS} ${RPCRT4} ${CMAKE_DL_LIBS} ${rt_library} ${ECC_LIB} )
+IF(NOT WIN32)
+  set(LINK_USR_LOCAL_LIB -L/usr/local/lib)
+ENDIF()
+target_link_libraries( fc PUBLIC ${LINK_USR_LOCAL_LIB} udt ${Boost_LIBRARIES} ${OPENSSL_LIBRARIES} ${ZLIB_LIBRARIES} ${PLATFORM_SPECIFIC_LIBS} ${RPCRT4} ${CMAKE_DL_LIBS} ${rt_library} ${readline_libraries} ${ECC_LIB} )
 
 if(MSVC)
   set_source_files_properties( src/network/http/websocket.cpp PROPERTIES COMPILE_FLAGS "/bigobj" )
@@ -289,20 +342,31 @@ ENDIF()
 add_executable( api tests/api.cpp )
 target_link_libraries( api fc )
 
+if( ECC_IMPL STREQUAL secp256k1 )
+    add_executable( blind tests/all_tests.cpp tests/crypto/blind.cpp )
+    target_link_libraries( blind fc )
+endif()
+
 include_directories( vendor/websocketpp )
 
-add_executable( ntp_test ntp_test.cpp )
+add_executable( ntp_test tests/all_tests.cpp tests/network/ntp_test.cpp )
 target_link_libraries( ntp_test fc )
 
-add_executable( task_cancel_test tests/task_cancel.cpp )
+add_executable( task_cancel_test tests/all_tests.cpp tests/thread/task_cancel.cpp )
 target_link_libraries( task_cancel_test fc )
 
 
-add_executable( bloom_test tests/bloom_test.cpp )
+add_executable( bloom_test tests/all_tests.cpp tests/bloom_test.cpp )
 target_link_libraries( bloom_test fc )
 
-add_executable( real128_test tests/real128_test.cpp )
+add_executable( real128_test tests/all_tests.cpp tests/real128_test.cpp )
 target_link_libraries( real128_test fc )
+
+add_executable( hmac_test tests/hmac_test.cpp )
+target_link_libraries( hmac_test fc )
+
+add_executable( blinding_test tests/blinding_test.cpp )
+target_link_libraries( blinding_test fc )
 
 
 add_executable( udt_server tests/udts.cpp )
@@ -311,20 +375,34 @@ target_link_libraries( udt_server fc udt )
 add_executable( udt_client tests/udtc.cpp )
 target_link_libraries( udt_client fc udt )
 
-add_executable( lzma_test tests/lzma_test.cpp )
-target_link_libraries( lzma_test fc )
-
-add_executable( ecc_test tests/ecc_test.cpp )
+add_executable( ecc_test tests/crypto/ecc_test.cpp )
 target_link_libraries( ecc_test fc )
 
-#add_executable( test_compress tests/compress.cpp )
-#target_link_libraries( test_compress fc )
 #add_executable( test_aes tests/aes_test.cpp )
 #target_link_libraries( test_aes fc ${rt_library} ${pthread_library} )
 #add_executable( test_sleep tests/sleep.cpp )
 #target_link_libraries( test_sleep fc )
 #add_executable( test_rate_limiting tests/rate_limiting.cpp )
 #target_link_libraries( test_rate_limiting fc )
+
+add_executable( all_tests tests/all_tests.cpp
+                          tests/compress/compress.cpp
+                          tests/crypto/aes_test.cpp
+                          tests/crypto/base_n_tests.cpp
+                          tests/crypto/bigint_test.cpp
+                          tests/crypto/blind.cpp
+                          tests/crypto/blowfish_test.cpp
+                          tests/crypto/dh_test.cpp
+                          tests/crypto/rand_test.cpp
+                          tests/crypto/sha_tests.cpp
+                          tests/network/ntp_test.cpp
+                          tests/network/http/websocket_test.cpp
+                          tests/thread/task_cancel.cpp
+                          tests/bloom_test.cpp
+                          tests/real128_test.cpp
+                          tests/utf8_test.cpp
+                          )
+target_link_libraries( all_tests fc )
 
 if(WIN32)
    # add addtional import library on windows platform
@@ -361,7 +439,7 @@ if(WIN32)
       endif()
 
    endforeach()
-   
+
    set(INTERFACE_LINK_PDB_DEBUG)
    set(SHARED_LIBRARIES_DEBUG)
    foreach(boost_import_lib ${Boost_LIBRARIES_DEBUG})
@@ -408,14 +486,6 @@ if(WIN32)
 
 endif(WIN32)
 
-IF(APPLE)
-  # As of 10.10 yosemite, the OpenSSL static libraries shipped with os x have a dependency
-  # on zlib, so any time you link in openssl you also need to link zlib.  .  We really want to detect whether openssl was configured with the --no-zlib
-  # option or not when it was built, but that's difficult to do in practice, so we
-  # just always try to link it in on mac.
-  find_package( ZLIB REQUIRED )
-ENDIF(APPLE)
-
 SET(OPENSSL_CONF_TARGET )
 IF(DEFINED CMAKE_RUNTIME_OUTPUT_DIRECTORY)
   SET (OPENSSL_CONF_TARGET ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
@@ -428,9 +498,8 @@ SET(POST_BUILD_STEP_COMMANDS ${POST_BUILD_STEP_COMMANDS}
      COMMAND ${CMAKE_COMMAND} -E copy_if_different "${OPENSSL_ROOT_DIR}/ssl/openssl.cnf" "${OPENSSL_CONF_TARGET}/openssl.cnf")
     ENDIF(WIN32)
 
-ADD_CUSTOM_COMMAND(TARGET fc POST_BUILD ${POST_BUILD_STEP_COMMANDS} 
+ADD_CUSTOM_COMMAND(TARGET fc POST_BUILD ${POST_BUILD_STEP_COMMANDS}
   COMMENT "Copying OpenSSL/ssl/openssl.cnf into target directory."
 )
 
 MESSAGE(STATUS "Finished fc module configuration...")
-

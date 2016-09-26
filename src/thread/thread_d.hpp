@@ -479,10 +479,7 @@ namespace fc {
               {
                 self->process_tasks();
               } 
-              catch ( canceled_exception& ) 
-              {
-                // allowed exception...
-              }
+              catch ( canceled_exception& ) { /* allowed exception */  }
               catch ( ... ) 
               {
                 elog( "fiber ${name} exited with uncaught exception: ${e}", ("e",fc::except_str())("name", self->name) );
@@ -670,6 +667,9 @@ namespace fc {
           if( tp <= (time_point::now()+fc::microseconds(10000)) ) 
             return;
 
+          FC_ASSERT(std::current_exception() == std::exception_ptr(), 
+                    "Attempting to yield while processing an exception");
+
           if( !current ) 
             current = new fc::context(&fc::thread::current());
 
@@ -702,6 +702,9 @@ namespace fc {
         void wait( const promise_base::ptr& p, const time_point& timeout ) {
           if( p->ready() ) 
             return;
+
+          FC_ASSERT(std::current_exception() == std::exception_ptr(), 
+                    "Attempting to yield while processing an exception");
 
           if( timeout < time_point::now() ) 
             FC_THROW_EXCEPTION( timeout_exception, "" );

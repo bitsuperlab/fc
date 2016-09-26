@@ -431,7 +431,14 @@ bool  variant::as_bool()const
    switch( get_type() )
    {
       case string_type:
-          return **reinterpret_cast<const const_string_ptr*>(this) == "true"; 
+      {
+          const string& s = **reinterpret_cast<const const_string_ptr*>(this);
+          if( s == "true" )
+             return true;
+          if( s == "false" )
+             return false;
+          FC_THROW_EXCEPTION( bad_cast_exception, "Cannot convert string to bool (only \"true\" or \"false\" can be converted)" );
+      }
       case double_type:
           return *reinterpret_cast<const double*>(this) != 0.0;
       case int64_type:
@@ -788,7 +795,7 @@ string      format_string( const string& format, const variant_object& args )
          variants result;
          result.reserve( std::max(aa.size(),ba.size()) );
          auto num = std::max(aa.size(),ba.size());
-         for( uint64_t i = 0; i < num; ++i )
+         for( unsigned i = 0; i < num; ++i )
          {
             if( aa.size() > i && ba.size() > i )
                result[i]  = aa[i] + ba[i];
@@ -815,7 +822,7 @@ string      format_string( const string& format, const variant_object& args )
          variants result;
          result.reserve( std::max(aa.size(),ba.size()) );
          auto num = std::max(aa.size(),ba.size());
-         for( uint64_t i = 0; i < num; --i )
+         for( unsigned i = 0; i < num; --i )
          {
             if( aa.size() > i && ba.size() > i )
                result[i]  = aa[i] - ba[i];
@@ -844,7 +851,7 @@ string      format_string( const string& format, const variant_object& args )
          variants result;
          result.reserve( std::max(aa.size(),ba.size()) );
          auto num = std::max(aa.size(),ba.size());
-         for( uint64_t i = 0; i < num; ++i )
+         for( unsigned i = 0; i < num; ++i )
          {
             if( aa.size() > i && ba.size() > i )
                result[i]  = aa[i] * ba[i];
@@ -869,7 +876,7 @@ string      format_string( const string& format, const variant_object& args )
          variants result;
          result.reserve( std::max(aa.size(),ba.size()) );
          auto num = std::max(aa.size(),ba.size());
-         for( uint64_t i = 0; i < num; ++i )
+         for( unsigned i = 0; i < num; ++i )
          {
             if( aa.size() > i && ba.size() > i )
                result[i]  = aa[i] / ba[i];

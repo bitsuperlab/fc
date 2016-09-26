@@ -9,18 +9,18 @@
 namespace fc { namespace ecc {
     namespace detail {
 
-        private_key_impl::private_key_impl() noexcept
+        private_key_impl::private_key_impl() BOOST_NOEXCEPT
         {
             _init_lib();
         }
 
-        private_key_impl::private_key_impl( const private_key_impl& cpy ) noexcept
+        private_key_impl::private_key_impl( const private_key_impl& cpy ) BOOST_NOEXCEPT
         {
             _init_lib();
             this->_key = cpy._key;
         }
 
-        private_key_impl& private_key_impl::operator=( const private_key_impl& pk ) noexcept
+        private_key_impl& private_key_impl::operator=( const private_key_impl& pk ) BOOST_NOEXCEPT
         {
             _key = pk._key;
             return *this;
@@ -85,7 +85,7 @@ namespace fc { namespace ecc {
         return secp256k1_nonce_function_default( nonce32, msg32, key32, *extra, nullptr );
     }
 
-    compact_signature private_key::sign_compact( const fc::sha256& digest )const
+    compact_signature private_key::sign_compact( const fc::sha256& digest, bool require_canonical )const
     {
         FC_ASSERT( my->_key != empty_priv );
         compact_signature result;
@@ -94,7 +94,7 @@ namespace fc { namespace ecc {
         do
         {
             FC_ASSERT( secp256k1_ecdsa_sign_compact( detail::_get_context(), (unsigned char*) digest.data(), (unsigned char*) result.begin() + 1, (unsigned char*) my->_key.data(), extended_nonce_function, &counter, &recid ));
-        } while( !public_key::is_canonical( result ) );
+        } while( require_canonical && !public_key::is_canonical( result ) );
         result.begin()[0] = 27 + 4 + recid;
         return result;
     }

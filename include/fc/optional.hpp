@@ -18,9 +18,11 @@ namespace fc {
    *  fc::optional adds less than 400.
    */
   template<typename T>
-  class optional 
+  class optional
   {
     public:
+      typedef T value_type;
+
       optional():_valid(false){}
       ~optional(){ reset(); }
 
@@ -236,7 +238,7 @@ namespace fc {
       const T* ptr()const { const void* v = &_value[0]; return static_cast<const T*>(v); }
 
       // force alignment... to 8 byte boundaries 
-      double _value[8 * ((sizeof(T)+7)/8)];
+      double _value[((sizeof(T)+7)/8)];
       bool   _valid;
   };
 
